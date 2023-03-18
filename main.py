@@ -8,6 +8,7 @@ solver = SMTSolver()
 solver.reset()
 
 while True:
+  print("> ", end='')
   inp = input()
   res = solver.turn(inp)
   print(res.debug)
