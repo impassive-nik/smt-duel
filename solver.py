@@ -5,8 +5,9 @@ from enum import Enum
 class TurnResult(Enum):
   SUCCESS = 1
   MISTAKE = 2
-  LOST = 3
-  DRAW = 4
+  TAUTOLOGY = 3 
+  LOST = 4
+  DRAW = 5
 
 class TurnInfo:
   result = TurnResult.SUCCESS
@@ -31,7 +32,7 @@ class ASTVisitor:
       return repr(node)
 
   def visit_node(self, node, level=0):
-    #print('  ' * level + self.str_node(node))
+    #print(" " * level, self.str_node(node))
     if isinstance(node, ast.Name):
       if not node.id in self.variables:
         raise ValueError("Unknown variable: {}".format(node.id))
@@ -61,6 +62,27 @@ class ASTVisitor:
         return ops[0] * ops[1]
       if isinstance(node.op, ast.Div):
         return ops[0] / ops[1]
+      if isinstance(node.op, ast.Mod):
+        return ops[0] % ops[1]
+      raise ValueError("Unsupported binary operator: {}".format(type(node.op).__name__))
+
+    if isinstance(node, ast.UnaryOp) and op_len == 1:
+      if isinstance(node.op, ast.Not):
+        return z3.Not(ops[0])
+      raise ValueError("Unsupported unary operator: {}".format(type(node.op).__name__))
+
+    if isinstance(node, ast.BoolOp):
+      if isinstance(node.op, ast.And) and op_len > 1:
+        cur_expr = ops[0]
+        for op in ops[1:]:
+          cur_expr = z3.And(cur_expr, op)
+        return cur_expr
+      if isinstance(node.op, ast.Or):
+        cur_expr = ops[0]
+        for op in ops[1:]:
+          cur_expr = z3.Or(cur_expr, op)
+        return cur_expr
+      raise ValueError("Unsupported boolean operator: {} with {} operands".format(type(node.op).__name__, op_len))
 
     if isinstance(node, ast.Compare) and op_len == 2:
       if len(node.ops) != 1:
@@ -79,9 +101,9 @@ class ASTVisitor:
         return ops[0] == ops[1]
       if isinstance(comp, ast.NotEq):
         return ops[0] != ops[1]
+      raise ValueError("Unsupported comparator: {} with {} operands".format(type(comp).__name__, op_len))
     
     raise ValueError("Unsupported node type: {} with {} operands".format(type(node).__name__, op_len))
-
   
   def parse(self, str):
     parsed = ast.parse(str)
@@ -105,6 +127,33 @@ class SMTSolver:
     self.cur_assert_id = 0
     self.visitor = ASTVisitor(self.variables)
     self.assertions = {}
+    self.cur_constraints = None
+  
+  def is_tautology(self, new_expr):
+    s = z3.Solver()
+    s.add(z3.Not(new_expr))
+    if self.cur_constraints is not None:
+      s.add(self.cur_constraints)
+
+    return s.check() != z3.sat
+  
+  def is_unique_solution(self, model):
+    s = z3.Solver()
+    s.add(self.cur_constraints)
+
+    expr = None
+    for v in self.variables:
+      cur_expr = self.variables[v] != model[self.variables[v]]
+      if expr is None:
+        expr = cur_expr
+      else:
+        expr = z3.Or(expr, cur_expr)
+    
+    if expr is None:
+      return True
+    
+    s.add(expr)
+    return s.check() == z3.unsat
   
   def turn(self, inp):
     expr = None
@@ -120,19 +169,32 @@ class SMTSolver:
     self.assertions[assert_name] = expr
 
     try:
+      if self.is_tautology(expr):
+        return TurnInfo(TurnResult.TAUTOLOGY, debug_expr)
+    except z3.Z3Exception as e:
+      return TurnInfo(TurnResult.MISTAKE, debug_expr, str(e))
+
+    try:
       self.solver.assert_and_track(expr, assert_name)
       self.cur_assert_id += 1
     except z3.Z3Exception as e:
       return TurnInfo(TurnResult.MISTAKE, debug_expr, str(e))
+    
+    if self.cur_constraints is None:
+      self.cur_constraints = expr
+    else:
+      self.cur_constraints = z3.And(self.cur_constraints, expr)
 
     check_result = self.solver.check()
     if check_result == z3.unsat:
-
       return TurnInfo(TurnResult.LOST, debug_expr, " and ".join(["(" + str(self.assertions[str(x)]) + ")" for x in self.solver.unsat_core()]))
 
     if check_result == z3.unknown:
-      return TurnInfo(TurnResult.DRAW, debug_expr)
+      return TurnInfo(TurnResult.DRAW, debug_expr, "The solver is unable to solve the system")
     
+    if self.is_unique_solution(self.solver.model()):
+      return TurnInfo(TurnResult.DRAW, debug_expr, "The system now has only one solution")
+
     return TurnInfo(TurnResult.SUCCESS, debug_expr)
 
   def get_variables():

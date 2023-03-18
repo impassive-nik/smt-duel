@@ -8,10 +8,8 @@ solver = SMTSolver()
 solver.reset()
 
 while True:
-  print("> ", end='')
   inp = input()
   res = solver.turn(inp)
-  print(res.debug)
   
   if res.result == TurnResult.SUCCESS:
     print("Success")
@@ -21,8 +19,12 @@ while True:
     print("Mistake: {}".format(res.info))
     continue
   
+  if res.result == TurnResult.TAUTOLOGY:
+    print("The statement gives no new information")
+    continue
+  
   if res.result == TurnResult.LOST:
-    print("You lost. {}".format(res.info))
+    print("You lost. Unsatisfiable constraints: {}".format(res.info))
     break
   
   if res.result == TurnResult.DRAW:
