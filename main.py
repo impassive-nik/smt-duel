@@ -5,11 +5,11 @@ from solver import SMTSolver, TurnInfo, TurnResult
 variables = ["x", "y", "z"]
 
 solver = SMTSolver()
-solver.reset()
+solver.reset(variables)
 
 while True:
   inp = input()
-  res = solver.turn(inp)
+  res, fixed_expr = solver.turn(inp)
   
   if res.result == TurnResult.SUCCESS:
     print("Success")

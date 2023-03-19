@@ -1,5 +1,6 @@
 import z3
 import ast
+import re
 from enum import Enum
 
 class TurnResult(Enum):
@@ -114,6 +115,20 @@ class ASTVisitor:
     if not isinstance(expr, ast.Expr):
       raise ValueError("Expected an arithmetic expression")
     return self.visit_node(expr.value)
+  
+  def fix_token(self, token):
+    if token == "&&":
+      return "and"
+    if token == "||":
+      return "or"
+    if token == "=":
+      return "=="
+  
+  def prepare(self, str):
+    tokens = [self.fix_token(x.strip()) for x in re.findall(r'-(\w*)|\w+|\(|\)|[^\w\(\)\s-]+|\s+', str)]
+    str = re.sub('&&', 'and', str)
+    str = re.sub('\|\|', 'or', str)
+    return " ".join([x for x in tokens])
 
 class SMTSolver:
   variables = {}
@@ -157,12 +172,13 @@ class SMTSolver:
   
   def turn(self, inp):
     expr = None
+    #inp = self.visitor.prepare(inp)
     try:
       expr = self.visitor.parse(inp)
     except ValueError as e:
-      return TurnInfo(TurnResult.MISTAKE, "", str(e))
+      return TurnInfo(TurnResult.MISTAKE, "", str(e)), inp
     except SyntaxError as e:
-      return TurnInfo(TurnResult.MISTAKE, "", str(e))
+      return TurnInfo(TurnResult.MISTAKE, "", str(e)), inp
     
     assert_name = "a" + str(self.cur_assert_id)
     debug_expr = str(expr)
@@ -170,9 +186,9 @@ class SMTSolver:
 
     try:
       if self.is_tautology(expr):
-        return TurnInfo(TurnResult.TAUTOLOGY, debug_expr)
+        return TurnInfo(TurnResult.TAUTOLOGY, debug_expr), expr
     except z3.Z3Exception as e:
-      return TurnInfo(TurnResult.MISTAKE, debug_expr, str(e))
+      return TurnInfo(TurnResult.MISTAKE, debug_expr, str(e)), expr
 
     try:
       self.solver.assert_and_track(expr, assert_name)
@@ -187,18 +203,15 @@ class SMTSolver:
 
     check_result = self.solver.check()
     if check_result == z3.unsat:
-      return TurnInfo(TurnResult.LOST, debug_expr, " and ".join(["(" + str(self.assertions[str(x)]) + ")" for x in self.solver.unsat_core()]))
+      return TurnInfo(TurnResult.LOST, debug_expr, " and ".join(["(" + str(self.assertions[str(x)]) + ")" for x in self.solver.unsat_core()])), expr
 
     if check_result == z3.unknown:
-      return TurnInfo(TurnResult.DRAW, debug_expr, "The solver is unable to solve the system")
+      return TurnInfo(TurnResult.DRAW, debug_expr, "The solver is unable to solve the system"), expr
     
     if self.is_unique_solution(self.solver.model()):
-      return TurnInfo(TurnResult.DRAW, debug_expr, "The system now has only one solution")
+      return TurnInfo(TurnResult.DRAW, debug_expr, "The system now has only one solution"), expr
 
-    return TurnInfo(TurnResult.SUCCESS, debug_expr)
+    return TurnInfo(TurnResult.SUCCESS, debug_expr), expr
 
   def get_variables():
-    return self.variables
-
-  def get_operations():
-    return unary_ops + binary_ops
+    return ", ".join(self.variables)
