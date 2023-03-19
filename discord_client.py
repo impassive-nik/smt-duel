@@ -21,17 +21,23 @@ club = None
 clubmen = None
 hall = None
 
+duels = {}
+
 class Duel:
   variables = ["x", "y", "z"]
 
-  def __init__(self):
+  def __init__(self, users):
     self.solver = SMTSolver()
+    self.users = users
+    self.turn = 0
   
-  async def reset(self, channel):
+  async def register(self, ctx):
     self.solver.reset(self.variables)
-    await channel.send(f"Начинается новый раунд!\nСписок переменных: {', '.join(self.variables)}\nИспользуйте команду /math")
-
-cur_duel = Duel()
+    await ctx.response.send_message(f"{self.users[0].name} вызывает на дуэль {self.users[1].name}!\nСписок переменных: {', '.join(self.variables)}\nИспользуйте команду /math")
+    message = await ctx.original_response()
+    self.thread = await message.create_thread(name=f"Дуэль {self.users[0].name} и {self.users[1].name}", auto_archive_duration=60)
+    duels[self.thread.id] = self
+    await self.thread.send(f"Сейчас ход {self.users[self.turn].mention}!", silent=True)
     
 @client.event
 async def on_ready():
@@ -69,27 +75,50 @@ async def on_ready():
     exit(1)
   
   # Clear the hall
-  mgs = [] 
+  mgs = []
+
+  threads = hall.threads
+  for t in threads:
+    await t.delete()
+  
   async for x in hall.history(limit=200):
     mgs.append(x)
+  
   await hall.delete_messages(mgs)
-  await cur_duel.reset(hall)
+  await hall.send("В клубе наступает новый день!\nМожет, начнём его с хорошей математической дуэли?\nИспользуйте команду /duel, чтобы выбрать себе оппонента!")
 
 @client.event
 async def setup_hook():
   await tree.sync()
 
-@tree.command(name = "math", description = "Сделать математическое утверждение")
-async def math(ctx: discord.Interaction, *, expr: str):
-  if ctx.channel != hall:
+@tree.command(name = "duel", description = "Вызвать на дуэль")
+async def duel(ctx: discord.Interaction, opponent: discord.Member):
+  if ctx.channel.id != hall.id or opponent is None:
+    await ctx.response.send_message(f"Дуэли можно объявлять только в канале '{hall.name}'", silent=True)
     return
 
-  res, fixed_expr = cur_duel.solver.turn(expr)
+  duel = Duel([ctx.user, opponent])
+  await duel.register(ctx)
+
+@tree.command(name = "math", description = "Сделать математическое утверждение")
+async def math(ctx: discord.Interaction, *, expr: str):
+  if ctx.channel.id not in duels:
+    await ctx.response.send_message(f"Чтобы начать дуэль, используйте команду /duel с ником оппонента в канале '{hall.name}'", silent=True)
+    return
+
+  duel = duels[ctx.channel.id]
+
+  if duel.users[duel.turn].id != ctx.user.id:
+    await ctx.response.send_message(f"Сейчас ход {duel.users[duel.turn].name}!", silent=True)
+    return
+
+  res, fixed_expr = duel.solver.turn(expr)
 
   input = expr if expr == f"```{expr}```" else f"```{expr}```||```{fixed_expr}```||"
   
   if res.result == TurnResult.SUCCESS:
-    await ctx.response.send_message(f"{input}Новое утверждение от {ctx.user.name}", silent=True)
+    duel.turn = (duel.turn + 1) % len(duel.users)
+    await ctx.response.send_message(f"{input}Новое утверждение от {ctx.user.name}.\nСейчас ход {duel.users[duel.turn].mention}!", silent=True) 
     return
   
   if res.result == TurnResult.MISTAKE:
@@ -102,12 +131,12 @@ async def math(ctx: discord.Interaction, *, expr: str):
   
   if res.result == TurnResult.LOST:
     await ctx.response.send_message(f"{input}Ты проиграл. Несовместимый набор утверждений: {res.info}", silent=True)
-    await cur_duel.reset(hall)
+    duels.pop(ctx.channel.id, None)
     return
   
   if res.result == TurnResult.DRAW:
     await ctx.response.send_message(f"{input}Ничья. {res.info}", silent=True)
-    await cur_duel.reset(hall)
+    duels.pop(ctx.channel.id, None)
     return
 
 client.run(sys.argv[1])

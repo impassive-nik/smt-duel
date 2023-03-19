@@ -10,6 +10,7 @@ solver.reset(variables)
 while True:
   inp = input()
   res, fixed_expr = solver.turn(inp)
+  print(fixed_expr)
   
   if res.result == TurnResult.SUCCESS:
     print("Success")

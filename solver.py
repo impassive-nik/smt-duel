@@ -1,6 +1,8 @@
 import z3
 import ast
 import re
+import io
+import tokenize
 from enum import Enum
 
 class TurnResult(Enum):
@@ -23,6 +25,7 @@ class TurnInfo:
 class ASTVisitor:
   def __init__(self, variables):
     self.variables = variables
+    self.divisors = []
   
   def str_node(self, node):
     if isinstance(node, ast.AST):
@@ -40,7 +43,9 @@ class ASTVisitor:
       return self.variables[node.id]
     
     if isinstance(node, ast.Constant):
-      return z3.IntVal(node.value)
+      if isinstance(node.value, int):
+        return z3.IntVal(node.value)
+      raise ValueError("Expected integer: {}".format(node.value))
 
     ops = []
     for field, value in ast.iter_fields(node):
@@ -62,14 +67,18 @@ class ASTVisitor:
       if isinstance(node.op, ast.Mult):
         return ops[0] * ops[1]
       if isinstance(node.op, ast.Div):
+        self.divisors.append(ops[1])
         return ops[0] / ops[1]
       if isinstance(node.op, ast.Mod):
+        self.divisors.append(ops[1])
         return ops[0] % ops[1]
       raise ValueError("Unsupported binary operator: {}".format(type(node.op).__name__))
 
     if isinstance(node, ast.UnaryOp) and op_len == 1:
       if isinstance(node.op, ast.Not):
         return z3.Not(ops[0])
+      if isinstance(node.op, ast.USub):
+        return -ops[0]
       raise ValueError("Unsupported unary operator: {}".format(type(node.op).__name__))
 
     if isinstance(node, ast.BoolOp):
@@ -114,7 +123,12 @@ class ASTVisitor:
     expr = parsed.body[0]
     if not isinstance(expr, ast.Expr):
       raise ValueError("Expected an arithmetic expression")
-    return self.visit_node(expr.value)
+
+    self.divisors = []
+    result_expr = self.visit_node(expr.value)
+    for d in self.divisors:
+      result_expr = z3.And(result_expr, d != z3.IntVal(0))
+    return result_expr
   
   def fix_token(self, token):
     if token == "&&":
@@ -123,12 +137,11 @@ class ASTVisitor:
       return "or"
     if token == "=":
       return "=="
+    return token.lower()
   
   def prepare(self, str):
-    tokens = [self.fix_token(x.strip()) for x in re.findall(r'-(\w*)|\w+|\(|\)|[^\w\(\)\s-]+|\s+', str)]
-    str = re.sub('&&', 'and', str)
-    str = re.sub('\|\|', 'or', str)
-    return " ".join([x for x in tokens])
+    tokens = re.findall(r'\s+|-\w*|\w+|\(|\)|[^\w\(\)\s-]+', str)
+    return "".join([self.fix_token(x) for x in tokens])
 
 class SMTSolver:
   variables = {}
@@ -169,10 +182,10 @@ class SMTSolver:
     
     s.add(expr)
     return s.check() == z3.unsat
-  
+
   def turn(self, inp):
     expr = None
-    #inp = self.visitor.prepare(inp)
+    inp = self.visitor.prepare(inp)
     try:
       expr = self.visitor.parse(inp)
     except ValueError as e:
