@@ -23,8 +23,9 @@ class TurnInfo:
     self.info = info
 
 class ASTVisitor:
-  def __init__(self, variables):
+  def __init__(self, variables, var_type = "integer"):
     self.variables = variables
+    self.var_type = var_type
     self.divisors = []
   
   def str_node(self, node):
@@ -43,7 +44,9 @@ class ASTVisitor:
       return self.variables[node.id]
     
     if isinstance(node, ast.Constant):
-      if isinstance(node.value, int):
+      if self.var_type == "real" and isinstance(node.value, float):
+        return z3.RealVal(node.value)
+      elif isinstance(node.value, int):
         return z3.IntVal(node.value)
       raise ValueError("Expected integer: {}".format(node.value))
 
@@ -70,8 +73,11 @@ class ASTVisitor:
         self.divisors.append(ops[1])
         return ops[0] / ops[1]
       if isinstance(node.op, ast.Mod):
-        self.divisors.append(ops[1])
-        return ops[0] % ops[1]
+        if self.var_type == "real":
+          raise ValueError("Operator '%' can be used in integer arithmetics only!".format(type(node.op).__name__))
+        else:
+          self.divisors.append(ops[1])
+          return ops[0] % ops[1]
       raise ValueError("Unsupported binary operator: {}".format(type(node.op).__name__))
 
     if isinstance(node, ast.UnaryOp) and op_len == 1:
@@ -132,9 +138,9 @@ class ASTVisitor:
   
   def fix_token(self, token):
     if token == "&&":
-      return "and"
+      return " and "
     if token == "||":
-      return "or"
+      return " or "
     if token == "=":
       return "=="
     return token.lower()
@@ -146,14 +152,18 @@ class ASTVisitor:
 class SMTSolver:
   variables = {}
 
-  def reset(self, variables = ["x", "y", "z"]):
+  def reset(self, variables = ["x", "y", "z"], var_type = "integer"):
     self.solver = z3.Solver()
     self.solver.set(unsat_core=True)
     self.variable_exprs = []
+    self.var_type = var_type
     for v in variables:
-      self.variables[v] = z3.Int(v)
+      if self.var_type == "real":
+        self.variables[v] = z3.Real(v)
+      else:
+        self.variables[v] = z3.Int(v)
     self.cur_assert_id = 0
-    self.visitor = ASTVisitor(self.variables)
+    self.visitor = ASTVisitor(self.variables, self.var_type)
     self.assertions = {}
     self.cur_constraints = None
   

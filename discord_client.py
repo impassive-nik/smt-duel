@@ -4,6 +4,7 @@ import sys
 import discord
 from discord import app_commands
 from solver import SMTSolver, TurnInfo, TurnResult
+from typing import Optional
 
 if len(sys.argv) != 2:
   print("Error: expected bot token as the only argument", file=sys.stderr)
@@ -26,18 +27,21 @@ duels = {}
 class Duel:
   variables = ["x", "y", "z"]
 
-  def __init__(self, users):
+  def __init__(self, users, var_type = "integer"):
     self.solver = SMTSolver()
+    self.var_type = var_type
+    if self.var_type != "integer" and self.var_type != "real":
+      self.var_type = "integer"
     self.users = users
     self.turn = 0
   
   async def register(self, ctx):
-    self.solver.reset(self.variables)
-    await ctx.response.send_message(f"{self.users[0].name} вызывает на дуэль {self.users[1].name}!\nСписок переменных: {', '.join(self.variables)}\nИспользуйте команду /math")
+    self.solver.reset(self.variables, self.var_type)
+    await ctx.response.send_message(f"{self.users[0].name} вызывает на дуэль {self.users[1].name}!\nСписок переменных: {', '.join(self.variables)}\nТип переменных: {self.var_type}\nИспользуйте команду /math")
     message = await ctx.original_response()
     self.thread = await message.create_thread(name=f"Дуэль {self.users[0].name} и {self.users[1].name}", auto_archive_duration=60)
     duels[self.thread.id] = self
-    await self.thread.send(f"Сейчас ход {self.users[self.turn].mention}!", silent=True)
+    await self.thread.send(f"Сейчас ход {self.users[self.turn].mention}!")
     
 @client.event
 async def on_ready():
@@ -75,29 +79,35 @@ async def on_ready():
     exit(1)
   
   # Clear the hall
-  mgs = []
+  clear_hall = False
 
-  threads = hall.threads
-  for t in threads:
-    await t.delete()
-  
+  if clear_hall:
+    threads = hall.threads
+    for t in threads:
+      await t.delete()
+    
+  mgs = []
   async for x in hall.history(limit=200):
     mgs.append(x)
-  
-  await hall.delete_messages(mgs)
-  await hall.send("В клубе наступает новый день!\nМожет, начнём его с хорошей математической дуэли?\nИспользуйте команду /duel, чтобы выбрать себе оппонента!")
+    
+  if clear_hall:
+    await hall.delete_messages(mgs)
+    mgs = []
+
+  if len(mgs) == 0:
+    await hall.send("В клубе наступает новый день!\nМожет, начнём его с хорошей математической дуэли?\nИспользуйте команду /duel <оппонент> <Int/real> начать дуэль!")
 
 @client.event
 async def setup_hook():
   await tree.sync()
 
 @tree.command(name = "duel", description = "Вызвать на дуэль")
-async def duel(ctx: discord.Interaction, opponent: discord.Member):
+async def duel(ctx: discord.Interaction, opponent: discord.Member, vartype: Optional[str] = "integer"):
   if ctx.channel.id != hall.id or opponent is None:
     await ctx.response.send_message(f"Дуэли можно объявлять только в канале '{hall.name}'", silent=True)
     return
 
-  duel = Duel([ctx.user, opponent])
+  duel = Duel([ctx.user, opponent], vartype.strip().lower())
   await duel.register(ctx)
 
 @tree.command(name = "math", description = "Сделать математическое утверждение")

@@ -5,7 +5,7 @@ from solver import SMTSolver, TurnInfo, TurnResult
 variables = ["x", "y", "z"]
 
 solver = SMTSolver()
-solver.reset(variables)
+solver.reset(variables, "real")
 
 while True:
   inp = input()
