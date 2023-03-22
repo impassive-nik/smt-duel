@@ -41,7 +41,37 @@ class Duel:
     message = await ctx.original_response()
     self.thread = await message.create_thread(name=f"Дуэль {self.users[0].name} и {self.users[1].name}", auto_archive_duration=60)
     duels[self.thread.id] = self
-    await self.thread.send(f"Сейчас ход {self.users[self.turn].mention}!")
+    await self.thread.send(f"Сейчас ход {self.users[self.turn].mention}!", silent=True)
+  
+  async def make_bot_turn(self):
+    expr = get_bot_turn()
+    res, fixed_expr = duel.solver.turn(expr)
+
+    input = expr if expr == f"Я делаю свой ход:\n```{expr}```" else f"```{expr}```||```{fixed_expr}```||"
+    
+    if res.result == TurnResult.SUCCESS:
+      duel.turn = (duel.turn + 1) % len(duel.users)
+      await self.thread.send(f"{input}\nСейчас ход {duel.users[duel.turn].mention}!", silent=True)
+      return
+    
+    if res.result == TurnResult.MISTAKE:
+      await self.thread.send(f"{input}В моём утверждении ошибка: {res.info}", silent=True)
+      return
+    
+    if res.result == TurnResult.TAUTOLOGY:
+      await self.thread.send(f"{input}Моё утверждение не вносит ничего нового", silent=True)
+      self.make_bot_turn()
+      return
+    
+    if res.result == TurnResult.LOST:
+      await self.thread.send(f"{input}Я проиграл. Несовместимый набор утверждений: {res.info}", silent=True)
+      duels.pop(self.thread.id, None)
+      return
+    
+    if res.result == TurnResult.DRAW:
+      await self.thread.send(f"{input}Ничья. {res.info}", silent=True)
+      duels.pop(self.thread.id, None)
+      return
     
 @client.event
 async def on_ready():
@@ -128,7 +158,9 @@ async def math(ctx: discord.Interaction, *, expr: str):
   
   if res.result == TurnResult.SUCCESS:
     duel.turn = (duel.turn + 1) % len(duel.users)
-    await ctx.response.send_message(f"{input}Новое утверждение от {ctx.user.name}.\nСейчас ход {duel.users[duel.turn].mention}!", silent=True) 
+    await ctx.response.send_message(f"{input}Новое утверждение от {ctx.user.name}.\nСейчас ход {duel.users[duel.turn].mention}!", silent=True)
+    if duel.users[duel.turn].id == client.user.id:
+      await make_bot_turn(ctx, duel)
     return
   
   if res.result == TurnResult.MISTAKE:

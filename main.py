@@ -5,19 +5,38 @@ from solver import SMTSolver, TurnInfo, TurnResult
 variables = ["x", "y", "z"]
 
 solver = SMTSolver()
-solver.reset(variables, "real")
+solver.reset(variables, "int")
+
+class Player:
+  def __init__(self, name):
+    self.name = name
+  
+  def get_input(self):
+    return input()
+
+class Bot:
+  def __init__(self, name):
+    self.name = name
+  
+  def get_input(self):
+    turn = solver.get_bot_turn()
+    print(turn)
+    return turn
+
+players = [Player("Human"), Bot("Bot")]
+cur_player = 0
 
 while True:
-  inp = input()
-  res, fixed_expr = solver.turn(inp)
-  print(fixed_expr)
+  print(f"{players[cur_player].name}, it's your turn!")
+  res, fixed_expr = solver.turn(players[cur_player].get_input())
   
   if res.result == TurnResult.SUCCESS:
-    print("Success")
+    print("Accepted")
+    cur_player = (cur_player + 1) % len(players)
     continue
   
   if res.result == TurnResult.MISTAKE:
-    print("Mistake: {}".format(res.info))
+    print(f"Mistake: {res.info}")
     continue
   
   if res.result == TurnResult.TAUTOLOGY:
@@ -25,10 +44,10 @@ while True:
     continue
   
   if res.result == TurnResult.LOST:
-    print("You lost. Unsatisfiable constraints: {}".format(res.info))
+    print(f"{players[cur_player].name} lost. Unsatisfiable constraints: {res.info}")
     break
   
   if res.result == TurnResult.DRAW:
-    print("Draw. {}".format(res.info))
-    break  
+    print(f"Draw. {res.info}")
+    break
   

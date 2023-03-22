@@ -4,6 +4,7 @@ import re
 import io
 import tokenize
 from enum import Enum
+from bot import MathBot
 
 class TurnResult(Enum):
   SUCCESS = 1
@@ -74,7 +75,7 @@ class ASTVisitor:
         return ops[0] / ops[1]
       if isinstance(node.op, ast.Mod):
         if self.var_type == "real":
-          raise ValueError("Operator '%' can be used in integer arithmetics only!".format(type(node.op).__name__))
+          raise ValueError("Operator '%' can be used in integer arithmetics only!")
         else:
           self.divisors.append(ops[1])
           return ops[0] % ops[1]
@@ -152,10 +153,11 @@ class ASTVisitor:
 class SMTSolver:
   variables = {}
 
+  bot = MathBot()
+
   def reset(self, variables = ["x", "y", "z"], var_type = "integer"):
     self.solver = z3.Solver()
     self.solver.set(unsat_core=True)
-    self.variable_exprs = []
     self.var_type = var_type
     for v in variables:
       if self.var_type == "real":
@@ -235,6 +237,30 @@ class SMTSolver:
       return TurnInfo(TurnResult.DRAW, debug_expr, "The system now has only one solution"), expr
 
     return TurnInfo(TurnResult.SUCCESS, debug_expr), expr
+  
+  def get_bot_turn(self):
+    variables = list(self.variables.keys())
+
+    max_tries = 10
+    for i in range(max_tries):
+      inp = self.bot.get_turn(variables)
+
+      solver = SMTSolver()
+      solver.reset(variables, self.var_type)
+
+      try:
+        expr = self.visitor.parse(self.visitor.prepare(inp))
+        solver.solver.assert_exprs(expr)
+        if solver.solver.check() != z3.unsat:
+          break
+      except ValueError as e:
+        return f"{variables[0]} == {variables[0]} + 1"
+      except SyntaxError as e:
+        return f"{variables[0]} == {variables[0]} + 1"
+      except z3.Z3Exception as e:
+        return f"{variables[0]} == {variables[0]} + 1"
+
+    return inp
 
   def get_variables():
-    return ", ".join(self.variables)
+    return ", ".join(self.variables.keys())
